@@ -3,7 +3,7 @@
 differences where the momentum equations are taken to be linear, but the
 continuity equation is solved in its nonlinear form. The model supports turning
 on/off various terms, but in its mst complete form, the model solves the following
-set of eqations:
+set of equations:
 
     du/dt - fv = -g*d(eta)/dx + tau_x/(rho_0*H)- kappa*u
     dv/dt + fu = -g*d(eta)/dy + tau_y/(rho_0*H)- kappa*v
@@ -23,6 +23,7 @@ where dx, dy is the grid spacing in the x- and y-direction respectively, g is
 the acceleration of gravity and H is the resting depth of the fluid."""
 
 import time
+import pathlib
 import numpy as np
 import matplotlib.pyplot as plt
 import viz_tools
@@ -30,30 +31,32 @@ import viz_tools
 # ==================================================================================
 # ================================ Parameter stuff =================================
 # ==================================================================================
-# --------------- Physical prameters ---------------
-L_x = 1E+6              # Length of domain in x-direction
-L_y = 1E+6              # Length of domain in y-direction
-g = 9.81                 # Acceleration of gravity [m/s^2]
-H = 100                # Depth of fluid [m]
-f_0 = 1E-4              # Fixed part ofcoriolis parameter [1/s]
-beta = 2E-11            # gradient of coriolis parameter [1/ms]
-rho_0 = 1024.0          # Density of fluid [kg/m^3)]
-tau_0 = 0.1             # Amplitude of wind stress [kg/ms^2]
-use_coriolis = True     # True if you want coriolis force
-use_friction = False     # True if you want bottom friction
-use_wind = False        # True if you want wind stress
-use_beta = True         # True if you want variation in coriolis
-use_source = False       # True if you want mass source into the domain
-use_sink = False       # True if you want mass sink out of the domain
+# --------------- Physical parameters ---------------
+#bounds = [[-5E+0, -5E+0, -10], [5E+0, 5E+0, 30]]    # Simulation bounds: x_min, y_min, z_min, x_max, y_max, z_max
+bounds = [[-1E+0, -1E+0, -0.5], [1E+0, 1E+0, 0.5]]    # Simulation bounds: x_min, y_min, z_min, x_max, y_max, z_max
+L_x = bounds[1][0] - bounds[0][0]                   # Length of domain in x-direction
+L_y = bounds[1][1] - bounds[0][1]                   # Length of domain in y-direction
+g = 9.81                                            # Acceleration of gravity [m/s^2]
+H = 0.15                                             # Depth of fluid [m]
+f_0 = 1E-4                                          # Fixed part of coriolis parameter [1/s]
+beta = 2E-11                                        # gradient of coriolis parameter [1/ms]
+rho_0 = 1024.0                                      # Density of fluid [kg/m^3)]
+tau_0 = 0.1                                         # Amplitude of wind stress [kg/ms^2]
+use_coriolis = False                                 # True if you want coriolis force
+use_friction = True                                # True if you want bottom friction
+use_wind = False                                    # True if you want wind stress
+use_beta = True                                     # True if you want variation in coriolis
+use_source = False                                  # True if you want mass source into the domain
+use_sink = False                                    # True if you want mass sink out of the domain
 param_string = "\n================================================================"
 param_string += "\nuse_coriolis = {}\nuse_beta = {}".format(use_coriolis, use_beta)
 param_string += "\nuse_friction = {}\nuse_wind = {}".format(use_friction, use_wind)
 param_string += "\nuse_source = {}\nuse_sink = {}".format(use_source, use_sink)
 param_string += "\ng = {:g}\nH = {:g}".format(g, H)
 
-# --------------- Computational prameters ---------------
-N_x = 150                            # Number of grid points in x-direction
-N_y = 150                            # Number of grid points in y-direction
+# --------------- Computational parameters ---------------
+N_x = 256                            # Number of grid points in x-direction
+N_y = 256                            # Number of grid points in y-direction
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
 dy = L_y/(N_y - 1)                   # Grid spacing in y-direction
 dt = 0.1*min(dx, dy)/np.sqrt(g*H)    # Time step (defined from the CFL condition)
@@ -64,7 +67,12 @@ y = np.linspace(-L_y/2, L_y/2, N_y)  # Array with y-points
 X, Y = np.meshgrid(x, y)             # Meshgrid for plotting
 X = np.transpose(X)                  # To get plots right
 Y = np.transpose(Y)                  # To get plots right
+mesh_resolution = 64                # Resolution for the output mesh
 param_string += "\ndx = {:.2f} km\ndy = {:.2f} km\ndt = {:.2f} s".format(dx, dy, dt)
+
+# --------------- Output parameters ---------------
+output_folder = pathlib.Path('./output')
+output_folder.mkdir(exist_ok=True, parents=True)
 
 # Define friction array if friction is enabled.
 if (use_friction is True):
@@ -113,7 +121,7 @@ if (use_coriolis is True):
 # Define source array if source is enabled.
 if (use_source):
     sigma = np.zeros((N_x, N_y))
-    sigma = 0.0001*np.exp(-((X-L_x/2)**2/(2*(1E+5)**2) + (Y-L_y/2)**2/(2*(1E+5)**2)))
+    sigma = 0.1*np.exp(-((X-L_x/2)**2/(2*L_x**2) + (Y-L_y/2)**2/(2*L_y**2)))
     
 # Define source array if source is enabled.
 if (use_sink is True):
@@ -153,7 +161,9 @@ v_n[:, -1] = 0.0            # Ensuring initial v satisfy BC
 # Initial condition for eta.
 #eta_n[:, :] = np.sin(4*np.pi*X/L_y) + np.sin(4*np.pi*Y/L_y)
 #eta_n = np.exp(-((X-0)**2/(2*(L_R)**2) + (Y-0)**2/(2*(L_R)**2)))
-eta_n = np.exp(-((X-L_x/2.7)**2/(2*(0.05E+6)**2) + (Y-L_y/4)**2/(2*(0.05E+6)**2)))
+#eta_n = np.exp(-((X-L_x/2.7)**2/(2*(0.05E+6)**2) + (Y-L_y/4)**2/(2*(0.05E+6)**2)))
+eta_n =  0.25*np.exp(-((X-L_x/ 2.7)**2/(2*(0.01*L_x)**2) + (Y-L_y/4.0)**2/(2*(0.01*L_y)**2)))
+eta_n += 0.25*np.exp(-((X-L_x/-5.7)**2/(2*( 0.05*L_x)**2) + (Y-L_y/3.5)**2/(2*(0.05*L_y)**2)))
 #eta_n[int(3*N_x/8):int(5*N_x/8),int(3*N_y/8):int(5*N_y/8)] = 1.0
 #eta_n[int(6*N_x/8):int(7*N_x/8),int(6*N_y/8):int(7*N_y/8)] = 1.0
 #eta_n[int(3*N_x/8):int(5*N_x/8), int(13*N_y/14):] = 1.0
@@ -246,7 +256,7 @@ while (time_step < max_time_step):
 
     # Store eta and (u, v) every anin_interval time step for animations.
     if (time_step % anim_interval == 0):
-        print("Time: \t{:.2f} hours".format(time_step*dt/3600))
+        print("Time: \t{:.4f} minutes".format(time_step*dt/60))
         print("Step: \t{} / {}".format(time_step, max_time_step))
         print("Mass: \t{}\n".format(np.sum(eta_n)))
         u_list.append(u_n)
@@ -264,11 +274,15 @@ print("\nVisualizing results...")
 #viz_tools.quiver_plot(X, Y, u_n, v_n, "Final state of velocity field $\mathbf{u}(x,y)$")
 #viz_tools.hovmuller_plot(x, t_sample, hm_sample)
 #viz_tools.plot_time_series_and_ft(t_sample, ts_sample)
-#eta_anim = viz_tools.eta_animation(X, Y, eta_list, anim_interval*dt, "eta")
-eta_meshes = viz_tools.eta_meshes(X, Y, eta_list, anim_interval*dt, "eta_meshes")
-#eta_surf_anim = viz_tools.eta_animation3D(X, Y, eta_list, anim_interval*dt, "eta_surface")
-quiv_anim = viz_tools.velocity_animation(X, Y, u_list, v_list, anim_interval*dt, "velocity")
+eta_anim = viz_tools.eta_animation(X, Y, eta_list, anim_interval*dt, output_folder / "eta")
+eta_meshes = viz_tools.eta_meshes(eta_list, bounds, mesh_resolution, output_folder / "eta_meshes")
+eta_surf_anim = viz_tools.eta_animation3D(X, Y, eta_list, anim_interval*dt, output_folder / "eta_surface")
+quiv_anim = viz_tools.velocity_animation(X, Y, u_list, v_list, anim_interval*dt, output_folder / "velocity")
 # ============================ Done with visualization =============================
+
+# ==================================================================================
+# ================== Save the simulation data ======================================
+# ==================================================================================
 
 print("\nVisualization done!")
 #plt.show()

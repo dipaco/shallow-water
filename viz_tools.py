@@ -7,19 +7,26 @@ import matplotlib.pyplot as plt
 import cv2
 import tqdm
 import mcubes
+import multiprocessing
+from joblib import Parallel, delayed
 from pathlib import Path
 from matplotlib import animation
 from mpl_toolkits.mplot3d import Axes3D
 from PIL import Image
 import fourier_transform as ft
 
+
+MAX_THREADS = min(multiprocessing.cpu_count(), 64)
 #plt.style.use("seaborn")
 
-def eta_animation(X, Y, eta_list, frame_interval, filename, writer='opencv'):
+def eta_animation(X, Y, eta_list, frame_interval, frames_folder, writer='opencv', FPS=10):
     """Function that takes in the domain x, y (2D meshgrids) and a list of 2D arrays
     eta_list and creates an animation of all eta images. To get updating title one
     also need specify time step dt between each frame in the simulation, the number
     of time steps between each eta in eta_list and finally, a filename for video."""
+
+    frames_folder = Path(frames_folder)
+
     fig, ax = plt.subplots(1, 1)
     #plt.title("Velocity field $\mathbf{u}(x,y)$ after 0.0 days", fontname = "serif", fontsize = 17)
     plt.xlabel("x [m]", fontname = "serif", fontsize = 12)
@@ -30,20 +37,18 @@ def eta_animation(X, Y, eta_list, frame_interval, filename, writer='opencv'):
 
     # Update function for quiver animation.
     def update_eta(num):
-        ax.set_title("Surface elevation $\eta$ after t = {:.2f} hours".format(
-            num*frame_interval/3600), fontname = "serif", fontsize = 16)
+        ax.set_title("Surface elevation $\eta$ after t = {:.4f} minutes".format(
+            num*frame_interval/60), fontname = "serif", fontsize = 16)
         pmesh.set_array(eta_list[num][:-1, :-1].flatten())
         return pmesh,
 
     if writer == 'opencv':
-        FPS = 10
-        frames_folder = Path(f'{filename}_frames')
-        video_name = frames_folder / f'{filename}.mp4'
         frames_folder.mkdir(parents=True, exist_ok=True)
+        video_name = frames_folder / f'video.mp4'
         fourcc = cv2.VideoWriter_fourcc(*'MP4V')
         for i in tqdm.tqdm(range(len(eta_list)), desc='Rendering height video'):
             update_eta(i)
-            img_filename = frames_folder / f'frame_{i:04d}.png'
+            img_filename = frames_folder / f'frame_{i:08d}.png'
             plt.savefig(img_filename)
             frame = Image.open(img_filename)
 
@@ -64,69 +69,71 @@ def eta_animation(X, Y, eta_list, frame_interval, filename, writer='opencv'):
         return anim    # Need to return anim object to see the animation
 
 
-def eta_meshes(X, Y, eta_list, frame_interval, filename, writer='opencv'):
+def eta_meshes(eta_list, bounds, res, meshes_folder):
     """Function that takes in the domain x, y (2D meshgrids) and a list of 2D arrays
     eta_list and creates an animation of all eta images. To get updating title one
     also need specify time step dt between each frame in the simulation, the number
     of time steps between each eta in eta_list and finally, a filename for video."""
-
-    FPS = 10
-    res = 64 # eta_list[0].shape[0]
-    # We scale the XY domain to be able to visualize the waves
-    x_min, x_max, y_min, y_max, z_min, z_max = -5E+0, 5E+0, -5E+0, 5E+0, -10, 30
-    #x_min, x_max, y_min, y_max, z_min, z_max = -5E+5, 5E+5, -5E+5, 5E+5, -10*fc, 30*fc
-    #x_min, x_max, y_min, y_max, z_min, z_max = -5E+5, 5E+5, -5E+5, 5E+5, -5E+5, 5E+5
-    meshes_folder = Path(filename)
-    video_name = meshes_folder / f'{filename}.obj'
+    n = len(eta_list)
+    meshes_folder = Path(meshes_folder)    
     meshes_folder.mkdir(parents=True, exist_ok=True)
+    import tqdm_joblib
 
-    if writer == 'opencv':
-        fourcc = cv2.VideoWriter_fourcc(*'MP4V')
-        for i in tqdm.tqdm(range(len(eta_list)), desc='Extracting meshes'):
+    def get_mesh(i, eta, bounds, res, out_folder):
 
-            eta = eta_list[i]
+        x_min, y_min, z_min = bounds[0]
+        x_max, y_max, z_max = bounds[1]
 
-            # Create the volume
-            def f(x, y, z):
-                col = int((eta.shape[0] - 1) * (x - x_min) / (x_max - x_min))
-                row = int((eta.shape[1] - 1) * (y - y_min) / (y_max - y_min))
-                d = eta[col, row] - z
-                return d
+        # Adjust each axis resolution to the simulation bounds
+        rg = max(x_max - x_min, max(y_max - y_min, z_max - z_min))
+        resx = int(res / rg * (x_max - x_min))
+        resy = int(res / rg * (y_max - y_min))
+        resz = int(res / rg * (z_max - z_min))
 
-            # Extract the 0-isosurface
-            vertices, triangles = mcubes.marching_cubes_func((x_min, y_min, z_min), (x_max, y_max, z_max), res, res, res, f, 0.0)
+        # Create the volume
+        def sdf(x, y, z):
+            col = int((eta.shape[0] - 1) * (x - x_min) / (x_max - x_min))
+            row = int((eta.shape[1] - 1) * (y - y_min) / (y_max - y_min))
+            d = eta[col, row] - z
+            return d
 
-            # Or export to an OBJ file
-            mcubes.export_obj(vertices, triangles, str((meshes_folder / f'mesh_{i:04d}.obj').resolve()))
+        # Extract the 0-surface
+        vertices, triangles = mcubes.marching_cubes_func(tuple(bounds[0]), tuple(bounds[1]), resx, resy, resz, sdf, 0.0)
+
+        # export to an OBJ file
+        mcubes.export_obj(vertices, triangles, str((out_folder / f'mesh_{i:08d}.obj').resolve()))
+
+    with tqdm_joblib.tqdm_joblib(desc='Extracting meshes', total=n):
+        Parallel(n_jobs=MAX_THREADS)(delayed(get_mesh)(i, eta_list[i], bounds, res, meshes_folder) for i in range(n))
+
+    return 0
+
+    for i in tqdm.tqdm(range(len(eta_list)), desc='Extracting meshes'):
+
+        eta = eta_list[i]
+
+        # Create the volume
+        def sdf_function(x, y, z):
+            col = int((eta.shape[0] - 1) * (x - x_min) / (x_max - x_min))
+            row = int((eta.shape[1] - 1) * (y - y_min) / (y_max - y_min))
+            d = eta[col, row] - z
+            return d
+
+        # Extract the 0-surface
+        vertices, triangles = mcubes.marching_cubes_func((x_min, y_min, z_min), (x_max, y_max, z_max), res, res, res, sdf_function, 0.0)
+
+        # export to an OBJ file
+        mcubes.export_obj(vertices, triangles, str((meshes_folder / f'mesh_{i:08d}.obj').resolve()))
+
+    return 0
 
 
-            '''update_eta(i)
-            img_filename = frames_folder / f'frame_{i:04d}.png'
-            plt.savefig(img_filename)
-            frame = Image.open(img_filename)
-
-            if i == 0:
-                video = cv2.VideoWriter(str(video_name.resolve()), fourcc, FPS, frame.size)
-
-            video.write(np.array(frame)[..., 0:3])'''
-
-        '''cv2.destroyAllWindows()
-        video.release()'''
-        return 0
-    else:
-        anim = animation.FuncAnimation(fig, update_eta,
-            frames = len(eta_list), interval = 10, blit = False)
-        mpeg_writer = animation.FFMpegWriter(fps = 24, bitrate = 10000,
-            codec = "libx264", extra_args = ["-pix_fmt", "yuv420p"])
-        anim.save("{}.mp4".format(filename), writer = mpeg_writer)
-        return anim    # Need to return anim object to see the animation
-
-
-def velocity_animation(X, Y, u_list, v_list, frame_interval, filename, writer='opencv'):
+def velocity_animation(X, Y, u_list, v_list, frame_interval, frames_folder, writer='opencv', FPS=10):
     """Function that takes in the domain x, y (2D meshgrids) and a lists of 2D arrays
     u_list, v_list and creates an quiver animation of the velocity field (u, v). To get
     updating title one also need specify time step dt between each frame in the simulation,
     the number of time steps between each eta in eta_list and finally, a filename for video."""
+    frames_folder = Path(frames_folder)
     fig, ax = plt.subplots(figsize = (8, 8), facecolor = "white")
     plt.title("Velocity field $\mathbf{u}(x,y)$ after 0.0 days", fontname = "serif", fontsize = 19)
     plt.xlabel("x [km]", fontname = "serif", fontsize = 16)
@@ -140,20 +147,18 @@ def velocity_animation(X, Y, u_list, v_list, frame_interval, filename, writer='o
     def update_quiver(num):
         u = u_list[num]
         v = v_list[num]
-        ax.set_title("Velocity field $\mathbf{{u}}(x,y,t)$ after t = {:.2f} hours".format(
-            num*frame_interval/3600), fontname = "serif", fontsize = 19)
+        ax.set_title("Velocity field $\mathbf{{u}}(x,y,t)$ after t = {:.4f} minutes".format(
+            num*frame_interval/60), fontname = "serif", fontsize = 19)
         Q.set_UVC(u[::q_int, ::q_int], v[::q_int, ::q_int])
         return Q,
 
     if writer == 'opencv':
-        FPS = 10
-        frames_folder = Path(f'{filename}_frames')
-        video_name = frames_folder / f'{filename}.mp4'
         frames_folder.mkdir(parents=True, exist_ok=True)
+        video_name = frames_folder / f'video.mp4'
         fourcc = cv2.VideoWriter_fourcc(*'MP4V')
         for i in tqdm.tqdm(range(len(u_list)), desc='Rendering velocity video'):
             update_quiver(i)
-            img_filename = frames_folder / f'frame_{i:04d}.png'
+            img_filename = frames_folder / f'frame_{i:08d}.png'
             plt.savefig(img_filename)
             frame = Image.open(img_filename)
 
@@ -174,7 +179,10 @@ def velocity_animation(X, Y, u_list, v_list, frame_interval, filename, writer='o
         anim.save("{}.mp4".format(filename), writer = mpeg_writer)
         return anim    # Need to return anim object to see the animation
 
-def eta_animation3D(X, Y, eta_list, frame_interval, filename):
+def eta_animation3D(X, Y, eta_list, frame_interval, frames_folder, writer='opencv', FPS=10):
+
+    frames_folder = Path(frames_folder)
+
     fig = plt.figure(figsize = (8, 8), facecolor = "white")
     ax = fig.add_subplot(111, projection='3d')
 
@@ -183,8 +191,8 @@ def eta_animation3D(X, Y, eta_list, frame_interval, filename):
     def update_surf(num):
         ax.clear()
         surf = ax.plot_surface(X/1000, Y/1000, eta_list[num], cmap = plt.cm.RdBu_r)
-        ax.set_title("Surface elevation $\eta(x,y,t)$ after $t={:.2f}$ hours".format(
-            num*frame_interval/3600), fontname = "serif", fontsize = 19, y=1.04)
+        ax.set_title("Surface elevation $\eta(x,y,t)$ after $t={:.4f}$ minutes".format(
+            num*frame_interval/60), fontname = "serif", fontsize = 19, y=1.04)
         ax.set_xlabel("x [km]", fontname = "serif", fontsize = 14)
         ax.set_ylabel("y [km]", fontname = "serif", fontsize = 14)
         ax.set_zlabel("$\eta$ [m]", fontname = "serif", fontsize = 16)
@@ -194,12 +202,31 @@ def eta_animation3D(X, Y, eta_list, frame_interval, filename):
         plt.tight_layout()
         return surf,
 
-    anim = animation.FuncAnimation(fig, update_surf,
-        frames = len(eta_list), interval = 10, blit = False)
-    mpeg_writer = animation.FFMpegWriter(fps = 24, bitrate = 10000,
-        codec = "libx264", extra_args = ["-pix_fmt", "yuv420p"])
-    anim.save("{}.mp4".format(filename), writer = mpeg_writer)
-    return anim    # Need to return anim object to see the animation
+    if writer == 'opencv':
+        frames_folder.mkdir(exist_ok=True, parents=True)
+        video_name = frames_folder / f'video.mp4'
+        fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+        for i in tqdm.tqdm(range(len(eta_list)), desc='Rendering height video'):
+            update_surf(i)
+            img_filename = frames_folder / f'frame_{i:08d}.png'
+            plt.savefig(img_filename)
+            frame = Image.open(img_filename)
+
+            if i == 0:
+                video = cv2.VideoWriter(str(video_name.resolve()), fourcc, FPS, frame.size)
+
+            video.write(np.array(frame)[..., 0:3])
+
+        cv2.destroyAllWindows()
+        video.release()
+        return 0
+    else:
+        anim = animation.FuncAnimation(fig, update_surf,
+            frames = len(eta_list), interval = 10, blit = False)
+        mpeg_writer = animation.FFMpegWriter(fps = 24, bitrate = 10000,
+            codec = "libx264", extra_args = ["-pix_fmt", "yuv420p"])
+        anim.save("{}.mp4".format(filename), writer = mpeg_writer)
+        return anim    # Need to return anim object to see the animation
 
 def surface_plot3D(X, Y, eta, x_lim, y_lim, z_lim):
     """Function that takes input 1D coordinate arrays x, y and 2D array
