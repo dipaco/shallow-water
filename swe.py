@@ -55,8 +55,8 @@ param_string += "\nuse_source = {}\nuse_sink = {}".format(use_source, use_sink)
 param_string += "\ng = {:g}\nH = {:g}".format(g, H)
 
 # --------------- Computational parameters ---------------
-N_x = 256                            # Number of grid points in x-direction
-N_y = 256                            # Number of grid points in y-direction
+N_x = 256                           # Number of grid points in x-direction
+N_y = 256                           # Number of grid points in y-direction
 dx = L_x/(N_x - 1)                   # Grid spacing in x-direction
 dy = L_y/(N_y - 1)                   # Grid spacing in y-direction
 dt = 0.1*min(dx, dy)/np.sqrt(g*H)    # Time step (defined from the CFL condition)
@@ -67,7 +67,7 @@ y = np.linspace(-L_y/2, L_y/2, N_y)  # Array with y-points
 X, Y = np.meshgrid(x, y)             # Meshgrid for plotting
 X = np.transpose(X)                  # To get plots right
 Y = np.transpose(Y)                  # To get plots right
-mesh_resolution = 64                # Resolution for the output mesh
+mesh_resolution = 128                # Resolution for the output mesh
 param_string += "\ndx = {:.2f} km\ndy = {:.2f} km\ndt = {:.2f} s".format(dx, dy, dt)
 
 # --------------- Output parameters ---------------
@@ -163,7 +163,7 @@ v_n[:, -1] = 0.0            # Ensuring initial v satisfy BC
 #eta_n = np.exp(-((X-0)**2/(2*(L_R)**2) + (Y-0)**2/(2*(L_R)**2)))
 #eta_n = np.exp(-((X-L_x/2.7)**2/(2*(0.05E+6)**2) + (Y-L_y/4)**2/(2*(0.05E+6)**2)))
 eta_n =  0.25*np.exp(-((X-L_x/ 2.7)**2/(2*(0.01*L_x)**2) + (Y-L_y/4.0)**2/(2*(0.01*L_y)**2)))
-eta_n += 0.25*np.exp(-((X-L_x/-5.7)**2/(2*( 0.05*L_x)**2) + (Y-L_y/3.5)**2/(2*(0.05*L_y)**2)))
+eta_n += 0.25*np.exp(-((X-L_x/-5.7)**2/(2*( 0.02*L_x)**2) + (Y-L_y/3.5)**2/(2*(0.02*L_y)**2)))
 #eta_n[int(3*N_x/8):int(5*N_x/8),int(3*N_y/8):int(5*N_y/8)] = 1.0
 #eta_n[int(6*N_x/8):int(7*N_x/8),int(6*N_y/8):int(7*N_y/8)] = 1.0
 #eta_n[int(3*N_x/8):int(5*N_x/8), int(13*N_y/14):] = 1.0
